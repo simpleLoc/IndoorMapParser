@@ -40,7 +40,7 @@ namespace Indoor::Map
         }
     };
 
-    std::ostream& operator<<(std::ostream& os, const Point2D& p)
+    static std::ostream& operator<<(std::ostream& os, const Point2D& p)
     {
         return os << "(" << p.x << "; " << p.y << ")";
     }
