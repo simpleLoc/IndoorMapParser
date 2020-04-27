@@ -145,7 +145,13 @@ namespace Indoor::Map
         float heightAboveFloor;
 
         // Model parameter
-        float mdl_txp, mdl_exp, mdl_waf;
+        // see: Ebner, F.; Fetzer, T.; Deinzer, F.; Grzegorzek, M. 
+        //      On Wi-Fi Model Optimizations for Smartphone-Based Indoor Localization.
+        //      ISPRS Int. J. Geo-Inf. 2017, 6, 233.
+        //      https://www.mdpi.com/2220-9964/6/8/233
+        float mdl_txp; // sending power
+        float mdl_exp; // path-loss-exponent
+        float mdl_waf; // attenuation per ceiling/floor
     };
 
     enum class WallMaterial
