@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tinyxml2.h"
+#include "rapidxml.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 #include <functional>
+#include <fstream>
 
 #include "indoorMap.h"
 
@@ -33,6 +34,9 @@ namespace Indoor::Map
     private:
         std::shared_ptr<IndoorListener> listener;
 
+        using xml_node = rapidxml::xml_node<>;
+        using xml_attribute = rapidxml::xml_attribute<>;
+
     public:
         MapParser()
         {
@@ -55,64 +59,134 @@ namespace Indoor::Map
 
             this->listener = listener;
 
-            tinyxml2::XMLDocument xmlDoc;
-            tinyxml2::XMLError result = xmlDoc.LoadFile(filename.c_str());
-
-            if (result == tinyxml2::XMLError::XML_SUCCESS)
+            std::ifstream fileStream(filename);
+            if (fileStream.is_open())
             {
-                tinyxml2::XMLElement* xMap = xmlDoc.FirstChildElement();
-                processMap(xMap);
+                std::stringstream fileBuffer;
+                fileBuffer << fileStream.rdbuf();
+                std::string fileContent = fileBuffer.str();
+
+                try
+                {
+                    rapidxml::xml_document xmlDoc;
+                    xmlDoc.parse<0>(fileContent.data());
+                    xml_node* xMap = xmlDoc.first_node("map");
+                    processMap(xMap);
+                }
+                catch (const rapidxml::parse_error& e)
+                {
+                    std::cout << "XML Parser error: " << e.what() << std::endl;
+                    throw;
+                }
             }
             else
             {
                 std::stringstream msg;
-                msg << "Error reading indoor map xml '" << filename << "' with error: " << std::endl;
-                msg << xmlDoc.ErrorStr() << std::endl;
+                msg << "Indoor map file not found: '" << filename << "'\n";
 
                 std::cout << msg.str();
 
                 throw std::exception(msg.str().c_str());
             }
         }
-
+        
     private:
-        static void foreachNode(tinyxml2::XMLElement* element, const std::function<void(tinyxml2::XMLElement* e)> action)
+        static bool tryGetAttribute(const xml_node* node, const std::string& attName, char** value)
         {
-            for (tinyxml2::XMLElement* e = element->FirstChildElement(); e; e = e->NextSiblingElement())
+            xml_attribute* att = node->first_attribute(attName.c_str());
+
+            if (att)
             {
-                action(e);
+                *value = att->value();
+                return true;
+            }
+
+            return false;
+        }
+
+        static float floatAttribute(const xml_node* node, const std::string& attName, float defaultValue = 0.0f)
+        {
+            char* v;
+            if (tryGetAttribute(node, attName, &v))
+            {
+                return std::stof(v);
+            }
+
+            return defaultValue;
+        }
+
+        static int intAttribute(const xml_node* node, const std::string& attName, int defaultValue = 0)
+        {
+            char* v;
+            if (tryGetAttribute(node, attName, &v))
+            {
+                return std::stoi(v);
+            }
+
+            return defaultValue;
+        }
+
+        static bool boolAttribute(const xml_node* node, const std::string& attName, bool defaultValue = false)
+        {
+            char* v;
+            if (tryGetAttribute(node, attName, &v))
+            {
+                bool result;
+                std::istringstream buffer(v);
+                buffer >> std::boolalpha >> result;
+                return result;
+            }
+
+            return defaultValue;
+        }
+
+        static std::string strAttribute(const xml_node* node, const std::string& attName, std::string defaultValue = "")
+        {
+            char* v;
+            if (tryGetAttribute(node, attName, &v))
+            {
+                return std::string(v);
+            }
+
+            return defaultValue;
+        }
+
+        static void foreachNode(xml_node* node, const std::function<void(xml_node* e)> action)
+        {
+            for (xml_node* n = node->first_node(); n; n = n->next_sibling()) {
+                action(n);
             }
         }
 
-        static void foreachNode(tinyxml2::XMLElement* element, const std::string& elementName, const std::function<void(tinyxml2::XMLElement* e)> action)
+        static void foreachNode(xml_node* node, const std::string& nodeName, const std::function<void(xml_node* n)> action)
         {
-            foreachNode(element, [&elementName, &action](auto e)
+            foreachNode(node, [&nodeName, &action](auto n)
             {
-                if (std::strcmp(e->Name(), elementName.c_str()) == 0)
+                if (std::strcmp(n->name(), nodeName.c_str()) == 0)
                 {
-                    action(e);
+                    action(n);
                 }
             });
         }
 
-        void processMap(tinyxml2::XMLElement* xMap)
+        void processMap(xml_node* xMap)
         {
             Map map;
-            map.width = xMap->FloatAttribute("width");
-            map.depth = xMap->FloatAttribute("depth");
+            map.width = floatAttribute(xMap, "width");
+            map.depth = floatAttribute(xMap, "depth");
 
             listener->enterMap(map);
             
-            tinyxml2::XMLElement* xEarthReg = xMap->FirstChildElement("earthReg");
+            xml_node* xEarthReg = xMap->first_node("earthReg");
             if (xEarthReg)
             {
                 map.earthRegistration = processEarthRegistration(xEarthReg);
             }
 
-            tinyxml2::XMLElement* xFloors = xMap->FirstChildElement("floors");
+            xml_node* xFloors = xMap->first_node("floors");
             if (xFloors)
             {
-                foreachNode(xFloors, "floor", [this, &map](tinyxml2::XMLElement* e) {
+                foreachNode(xFloors, "floor", [this, &map](xml_node* e) {
                     Floor floor;
                     if (processFloor(e, floor))
                     {
@@ -124,25 +198,25 @@ namespace Indoor::Map
             listener->leaveMap(map);
         }
 
-        EarthRegistration processEarthRegistration(tinyxml2::XMLElement* xEarthReg)
+        EarthRegistration processEarthRegistration(xml_node* xEarthReg)
         {
             EarthRegistration earthReg;
 
             listener->enterEarthRegistration(earthReg);
 
-            tinyxml2::XMLElement* xCorrespondences = xEarthReg->FirstChildElement("correspondences");
+            xml_node* xCorrespondences = xEarthReg->first_node("correspondences");
             if (xCorrespondences)
             {
-                foreachNode(xCorrespondences, "point", [this, &earthReg](tinyxml2::XMLElement* e)
+                foreachNode(xCorrespondences, "point", [this, &earthReg](xml_node* e)
                 {
                     EarthPosMapPos pos;
-                    pos.lat = e->FloatAttribute("lat");
-                    pos.lon = e->FloatAttribute("lon");
-                    pos.alt = e->FloatAttribute("alt");
+                    pos.lat = floatAttribute(e, "lat");
+                    pos.lon = floatAttribute(e, "lon");
+                    pos.alt = floatAttribute(e, "alt");
 
-                    pos.x = e->FloatAttribute("mx");
-                    pos.y = e->FloatAttribute("my");
-                    pos.z = e->FloatAttribute("mz");
+                    pos.x = floatAttribute(e, "mx");
+                    pos.y = floatAttribute(e, "my");
+                    pos.z = floatAttribute(e, "mz");
 
                     this->listener->enterEarthPosMapPos(pos);
                     earthReg.correspondences.push_back(pos);
@@ -154,11 +228,11 @@ namespace Indoor::Map
             return earthReg;
         }
 
-        bool processFloor(tinyxml2::XMLElement* xFloor, Floor& floor)
+        bool processFloor(xml_node* xFloor, Floor& floor)
         {
-            floor.atHeight = xFloor->FloatAttribute("atHeight");
-            floor.height = xFloor->FloatAttribute("height");
-            floor.name = xFloor->Attribute("name");
+            floor.atHeight = floatAttribute(xFloor,"atHeight");
+            floor.height = floatAttribute(xFloor, "height");
+            floor.name = strAttribute(xFloor, "name");
 
             if (!listener->enterFloor(floor))
             {
@@ -167,7 +241,7 @@ namespace Indoor::Map
             else
             {
                 // outline
-                tinyxml2::XMLElement* xOutline = xFloor->FirstChildElement("outline");
+                xml_node* xOutline = xFloor->first_node("outline");
                 if (xOutline)
                 {
                     Outline outline;
@@ -178,42 +252,42 @@ namespace Indoor::Map
                 }
 
                 // obstacles
-                tinyxml2::XMLElement* xObstacles = xFloor->FirstChildElement("obstacles");
+                xml_node* xObstacles = xFloor->first_node("obstacles");
                 if (xObstacles)
                 {
                     processObstacles(xObstacles, floor);
                 }
 
                 // pois
-                tinyxml2::XMLElement* xPois = xFloor->FirstChildElement("pois");
+                xml_node* xPois = xFloor->first_node("pois");
                 if (xPois)
                 {
                     processPointOfInterests(xPois, floor.pois);
                 }
 
                 // gtpoints
-                tinyxml2::XMLElement* xGT = xFloor->FirstChildElement("gtpoints");
+                xml_node* xGT = xFloor->first_node("gtpoints");
                 if (xGT)
                 {
                     processGroundtruthPoints(xGT, floor);
                 }
 
                 // accesspoints
-                tinyxml2::XMLElement* xAP = xFloor->FirstChildElement("accesspoints");
+                xml_node* xAP = xFloor->first_node("accesspoints");
                 if (xAP)
                 {
                     processAccessPoints(xAP, floor);
                 }
 
                 // beacons
-                tinyxml2::XMLElement* xBeacons = xFloor->FirstChildElement("beacons");
+                xml_node* xBeacons = xFloor->first_node("beacons");
                 if (xBeacons)
                 {
                     processBeacons(xBeacons, floor);
                 }
 
                 // fingerprints
-                tinyxml2::XMLElement* xFingerprints = xFloor->FirstChildElement("fingerprints");
+                xml_node* xFingerprints = xFloor->first_node("fingerprints");
                 if (xFingerprints)
                 {
                     processFingerprints(xFingerprints, floor);
@@ -228,20 +302,20 @@ namespace Indoor::Map
             }
         }
 
-        bool processOutline(tinyxml2::XMLElement* xOutline, Outline& outline)
+        bool processOutline(xml_node* xOutline, Outline& outline)
         {           
             if (listener->enterOutline(outline))
             {
-                foreachNode(xOutline, "polygon", [this, &outline](tinyxml2::XMLElement* xPolygon)
+                foreachNode(xOutline, "polygon", [this, &outline](xml_node* xPolygon)
                 {
                     Polygon2D polygon;
-                    polygon.name = xPolygon->Attribute("name");
-                    polygon.method = (PolygonMethod)xPolygon->IntAttribute("method");
-                    polygon.isOutdoor = xPolygon->BoolAttribute("outdoor");
+                    polygon.name = strAttribute(xPolygon, "name");
+                    polygon.method = (PolygonMethod)intAttribute(xPolygon, "method");
+                    polygon.isOutdoor = boolAttribute(xPolygon, "outdoor");
 
-                    foreachNode(xPolygon, "point", [&polygon](tinyxml2::XMLElement* xPoint) {
-                        float x = xPoint->FloatAttribute("x");
-                        float y = xPoint->FloatAttribute("y");
+                    foreachNode(xPolygon, "point", [&polygon](xml_node* xPoint) {
+                        float x = floatAttribute(xPoint, "x");
+                        float y = floatAttribute(xPoint, "y");
 
                         polygon.points.push_back(Point2D(x, y));
                     });
@@ -254,16 +328,16 @@ namespace Indoor::Map
             return false;
         }
 
-        void processPointOfInterests(tinyxml2::XMLElement* xPois, std::vector<PointOfInterest>& pois)
+        void processPointOfInterests(xml_node* xPois, std::vector<PointOfInterest>& pois)
         {
             listener->enterPointOfInterests(pois);
-            foreachNode(xPois, "poi", [&pois](tinyxml2::XMLElement* xPoi)
+            foreachNode(xPois, "poi", [&pois](xml_node* xPoi)
             {
                 PointOfInterest poi;
-                poi.name = xPoi->Attribute("name");
-                poi.type = (POIType)xPoi->IntAttribute("type");
-                poi.x = xPoi->FloatAttribute("x");
-                poi.y = xPoi->FloatAttribute("y");
+                poi.name = strAttribute(xPoi, "name");
+                poi.type = (POIType)intAttribute(xPoi, "type");
+                poi.x = floatAttribute(xPoi, "x");
+                poi.y = floatAttribute(xPoi, "y");
 
                 pois.push_back(poi);
             });
@@ -271,16 +345,16 @@ namespace Indoor::Map
             listener->leavePointOfInterests(pois);
         }
 
-        void processGroundtruthPoints(tinyxml2::XMLElement* xGT, Floor& floor)
+        void processGroundtruthPoints(xml_node* xGT, Floor& floor)
         {
             listener->enterGrundtruthPoints(floor.groundtruthPoints);
-            foreachNode(xGT, "gtpoint", [&floor](tinyxml2::XMLElement* xGTpoint)
+            foreachNode(xGT, "gtpoint", [&floor](xml_node* xGTpoint)
             {
                 GroundtruthPoint gtPoint;
-                gtPoint.id = xGTpoint->IntAttribute("id");
-                gtPoint.x = xGTpoint->FloatAttribute("x");
-                gtPoint.y = xGTpoint->FloatAttribute("y");
-                gtPoint.heightAboveFloor = xGTpoint->FloatAttribute("z");
+                gtPoint.id = intAttribute(xGTpoint, "id");
+                gtPoint.x = floatAttribute(xGTpoint, "x");
+                gtPoint.y = floatAttribute(xGTpoint, "y");
+                gtPoint.heightAboveFloor = floatAttribute(xGTpoint, "z");
 
                 gtPoint.z = floor.atHeight + gtPoint.heightAboveFloor;
 
@@ -289,66 +363,66 @@ namespace Indoor::Map
             listener->leaveGrundtruthPoints(floor.groundtruthPoints);
         }
 
-        void processAccessPoints(tinyxml2::XMLElement* xAP, Floor& floor)
+        void processAccessPoints(xml_node* xAP, Floor& floor)
         {
             listener->enterAccessPoints(floor.accessPoints);
-            foreachNode(xAP, "accesspoint", [&floor](tinyxml2::XMLElement* xAccessPoint)
+            foreachNode(xAP, "accesspoint", [&floor](xml_node* xAccessPoint)
             {
                 AccessPoint ap;
-                ap.name = xAccessPoint->Attribute("name");
-                ap.macAddress = xAccessPoint->Attribute("mac");
-                ap.x = xAccessPoint->FloatAttribute("x");
-                ap.y = xAccessPoint->FloatAttribute("y");
-                ap.heightAboveFloor = xAccessPoint->FloatAttribute("z");
+                ap.name = strAttribute(xAccessPoint, "name");
+                ap.macAddress = strAttribute(xAccessPoint, "mac");
+                ap.x = floatAttribute(xAccessPoint, "x");
+                ap.y = floatAttribute(xAccessPoint, "y");
+                ap.heightAboveFloor = floatAttribute(xAccessPoint, "z");
 
                 ap.z = floor.atHeight + ap.heightAboveFloor;
 
-                ap.mdl_txp = xAccessPoint->FloatAttribute("mdl_txp");
-                ap.mdl_exp = xAccessPoint->FloatAttribute("mdl_exp");
-                ap.mdl_waf = xAccessPoint->FloatAttribute("mdl_waf");
+                ap.mdl_txp = floatAttribute(xAccessPoint, "mdl_txp");
+                ap.mdl_exp = floatAttribute(xAccessPoint, "mdl_exp");
+                ap.mdl_waf = floatAttribute(xAccessPoint, "mdl_waf");
 
                 floor.accessPoints.push_back(ap);
             });
             listener->leaveAccessPoints(floor.accessPoints);
         }
 
-        void processBeacons(tinyxml2::XMLElement* xBeacons, Floor& floor)
+        void processBeacons(xml_node* xBeacons, Floor& floor)
         {
             listener->enterBeacons(floor.beacons);
-            foreachNode(xBeacons, "beacon", [&floor](tinyxml2::XMLElement* xBeacon) {
+            foreachNode(xBeacons, "beacon", [&floor](xml_node* xBeacon) {
                 Beacon b;
-                b.name = xBeacon->Attribute("name");
-                b.macAddress = xBeacon->Attribute("mac");
-                b.uuid = xBeacon->Attribute("uuid");
+                b.name = strAttribute(xBeacon, "name");
+                b.macAddress = strAttribute(xBeacon, "mac");
+                b.uuid = strAttribute(xBeacon, "uuid");
 
-                b.major = xBeacon->Attribute("major");
-                b.minor = xBeacon->Attribute("minor");
+                b.major = strAttribute(xBeacon, "major");
+                b.minor = strAttribute(xBeacon, "minor");
                 
-                b.x = xBeacon->FloatAttribute("x");
-                b.y = xBeacon->FloatAttribute("y");
-                b.heightAboveFloor = xBeacon->FloatAttribute("z");
+                b.x = floatAttribute(xBeacon, "x");
+                b.y = floatAttribute(xBeacon, "y");
+                b.heightAboveFloor = floatAttribute(xBeacon, "z");
 
                 b.z = floor.atHeight + b.heightAboveFloor;
 
-                b.mdl_txp = xBeacon->FloatAttribute("mdl_txp");
-                b.mdl_exp = xBeacon->FloatAttribute("mdl_exp");
-                b.mdl_waf = xBeacon->FloatAttribute("mdl_waf");
+                b.mdl_txp = floatAttribute(xBeacon, "mdl_txp");
+                b.mdl_exp = floatAttribute(xBeacon, "mdl_exp");
+                b.mdl_waf = floatAttribute(xBeacon, "mdl_waf");
 
                 floor.beacons.push_back(b);
             });
             listener->leaveBeacons(floor.beacons);
         }
 
-        void processFingerprints(tinyxml2::XMLElement* xFingerprints, Floor& floor)
+        void processFingerprints(xml_node* xFingerprints, Floor& floor)
         {
             listener->enterFingerprintLocations(floor.fingerprintLocations);
-            foreachNode(xFingerprints, "location", [&floor](tinyxml2::XMLElement* xLocation) {
+            foreachNode(xFingerprints, "location", [&floor](xml_node* xLocation) {
                 FingerprintLocation fl;
-                fl.name = xLocation->Attribute("name");
+                fl.name = strAttribute(xLocation, "name");
 
-                fl.x = xLocation->FloatAttribute("x");
-                fl.y = xLocation->FloatAttribute("y");
-                fl.heightAboveFloor = xLocation->FloatAttribute("dz");
+                fl.x = floatAttribute(xLocation, "x");
+                fl.y = floatAttribute(xLocation, "y");
+                fl.heightAboveFloor = floatAttribute(xLocation, "dz");
 
                 fl.z = floor.atHeight + fl.heightAboveFloor;
 
@@ -444,30 +518,30 @@ namespace Indoor::Map
             }
         }
 
-        void processObstacles(tinyxml2::XMLElement* xObstacles, Floor& floor)
+        void processObstacles(xml_node* xObstacles, Floor& floor)
         {
             // Other obstacles: line, circle, door, object
             // atm only walls are parsed.
 
             listener->enterWalls(floor.walls);
-            foreachNode(xObstacles, "wall", [this, &floor](tinyxml2::XMLElement* xWall) {
+            foreachNode(xObstacles, "wall", [this, &floor](xml_node* xWall) {
                 Wall wall;
 
-                wall.material = (WallMaterial)xWall->IntAttribute("material");
-                wall.type = (ObstacleType)xWall->IntAttribute("type");
+                wall.material = (WallMaterial)intAttribute(xWall, "material");
+                wall.type = (ObstacleType)intAttribute(xWall, "type");
 
-                wall.x1 = xWall->FloatAttribute("x1");
-                wall.y1 = xWall->FloatAttribute("y1");
-                wall.x2 = xWall->FloatAttribute("x2");
-                wall.y2 = xWall->FloatAttribute("y2");
+                wall.x1 = floatAttribute(xWall, "x1");
+                wall.y1 = floatAttribute(xWall, "y1");
+                wall.x2 = floatAttribute(xWall, "x2");
+                wall.y2 = floatAttribute(xWall, "y2");
 
-                wall.height = xWall->FloatAttribute("height", NAN);
+                wall.height = floatAttribute(xWall, "height", NAN);
                 if (std::isnan(wall.height) || wall.height == 0.0f)
                 {
                     wall.height = floor.height;
                 }
 
-                wall.thickness = xWall->FloatAttribute("thickness", NAN);
+                wall.thickness = floatAttribute(xWall, "thickness", NAN);
                 if (std::isnan(wall.thickness))
                 {
                     wall.thickness = 0.15f;
@@ -478,16 +552,16 @@ namespace Indoor::Map
                     floor.walls.push_back(wall);
 
                     // Doors
-                    foreachNode(xWall, "door", [this, &wall](tinyxml2::XMLElement* xDoor) {
+                    foreachNode(xWall, "door", [this, &wall](xml_node* xDoor) {
                         WallDoor door;
 
-                        door.type = (DoorType)xDoor->IntAttribute("type");
-                        door.material = (WallMaterial)xDoor->IntAttribute("material");
-                        door.atLinePos = xDoor->FloatAttribute("x01");
-                        door.width = xDoor->FloatAttribute("width");
-                        door.height = xDoor->FloatAttribute("heigth");
-                        door.leftRight = xDoor->BoolAttribute("lr");
-                        door.inOut = xDoor->BoolAttribute("io");
+                        door.type = (DoorType)intAttribute(xDoor, "type");
+                        door.material = (WallMaterial)intAttribute(xDoor, "material");
+                        door.atLinePos = floatAttribute(xDoor, "x01");
+                        door.width = floatAttribute(xDoor, "width");
+                        door.height = floatAttribute(xDoor, "heigth");
+                        door.leftRight = boolAttribute(xDoor, "lr");
+                        door.inOut = boolAttribute(xDoor, "io");
 
                         if (this->listener->enterWallDoor(door))
                         {
@@ -497,16 +571,16 @@ namespace Indoor::Map
                     });
                     
                     // Windows
-                    foreachNode(xWall, "window", [this, &wall](tinyxml2::XMLElement* xWindow) {
+                    foreachNode(xWall, "window", [this, &wall](xml_node* xWindow) {
                         WallWindow window;
 
                         // window.type = xWindow->IntAttribute("type");
-                        window.material = (WallMaterial)xWindow->IntAttribute("material");
-                        window.atLinePos = xWindow->FloatAttribute("x01");
-                        window.atHeigth = xWindow->FloatAttribute("y");
-                        window.width = xWindow->FloatAttribute("width");
-                        window.height = xWindow->FloatAttribute("height");
-                        window.inOut = xWindow->BoolAttribute("io");
+                        window.material = (WallMaterial)intAttribute(xWindow, "material");
+                        window.atLinePos = floatAttribute(xWindow, "x01");
+                        window.atHeigth = floatAttribute(xWindow, "y");
+                        window.width = floatAttribute(xWindow, "width");
+                        window.height = floatAttribute(xWindow, "height");
+                        window.inOut = boolAttribute(xWindow, "io");
 
                         if (this->listener->enterWallWindow(window))
                         {
