@@ -458,7 +458,7 @@ namespace Indoor::Map
                 segDoor.start = wall.start() + dir * door.atLinePos;
                 segDoor.end = segDoor.start + dir.normalized() * (door.leftRight ? -door.width : +door.width);
 
-                if (segDoor.end.x < segDoor.start.x)
+                if (door.leftRight)
                     std::swap(segDoor.start, segDoor.end);
 
                 segments.push_back(segDoor);
@@ -477,23 +477,17 @@ namespace Indoor::Map
                 segWindow.start = center - dir.normalized() * window.width/2.0f;
                 segWindow.end   = center + dir.normalized() * window.width/2.0f;
 
-                if (segWindow.end.x < segWindow.start.x)
-                    std::swap(segWindow.start, segWindow.end);
-
                 segments.push_back(segWindow);
             }
 
             // Order by relative position
-            std::sort(segments.begin(), segments.end(), [](WallSegment2D& a, WallSegment2D& b) {
-                return a.start.x < b.start.x;
+            std::sort(segments.begin(), segments.end(), [&wall](WallSegment2D& a, WallSegment2D& b) {
+                return (a.start-wall.start()).length() < (b.start-wall.start()).length();
             });
 
 
             Point2D wStart = wall.start();
             Point2D wEnd = wall.end();
-
-            if (wEnd.x < wStart.x)
-                std::swap(wStart, wEnd);
 
             // Connect door/window segments with wall segments
             for (size_t i = 0; i < segments.size(); i++)

@@ -32,6 +32,8 @@ namespace Indoor::Map
     class SvgListener : public IndoorListener
     {
     private:
+        float maxX = 0;
+        float maxY = 0;
         std::stringstream svg;
         int indentLevel = 0;
         std::map<WallMaterial, SvgColor> colorMap;
@@ -67,10 +69,14 @@ namespace Indoor::Map
 
             if (pts.size() > 1)
             {
+                maxX = std::max(maxX, pts[0].x);
+                maxY = std::max(maxY, pts[0].y);
                 result << "M" << pts[0].x << " " << -pts[0].y;
 
                 for (size_t i = 1; i < pts.size(); i++)
                 {
+                    maxX = std::max(maxX, pts[i].x);
+                    maxY = std::max(maxY, pts[i].y);
                     result << " L" << pts[i].x << " " << -pts[i].y;
                 }
 
@@ -83,10 +89,17 @@ namespace Indoor::Map
 
         std::string svgArcStr(Point2D center, float radius, float startAngle, float endAngle)
         {
-            center.y = -center.y;
+            Point2D start = Point2D::fromPolar(center, radius, startAngle);
+            Point2D end = Point2D::fromPolar(center, radius, endAngle);
 
-            const Point2D start = Point2D::fromPolar(center, radius, startAngle);
-            const Point2D end = Point2D::fromPolar(center, radius, endAngle);
+            maxX = std::max(maxX, start.x);
+            maxY = std::max(maxY, start.y);
+            maxX = std::max(maxX, end.x);
+            maxY = std::max(maxY, end.y);
+
+            start.y = -start.y;
+            end.y = -end.y;
+
 
             const std::string largeArcFlag = (endAngle - startAngle <= M_PI) ? "0" : "1";
 
@@ -95,7 +108,7 @@ namespace Indoor::Map
                 << " A " << radius << " " << radius << " "  // radius
                 << 0 << " "  // roation x
                 << largeArcFlag << " "  // large arc?
-                << 1 << " "  // counter-clockwise?
+                << 0 << " "  // counter-clockwise?
                 << end.x << " " << end.y;  // endpoint
 
             return arcStr.str();
@@ -120,7 +133,12 @@ namespace Indoor::Map
 
         std::string svgString() const
         {
-            return svg.str();
+            std::stringstream correctlyTranslatedSvg;
+            correctlyTranslatedSvg << "<svg viewBox='0 0 " << maxX << " " << maxY << "' xmlns='http://www.w3.org/2000/svg'>" << std::endl;
+            correctlyTranslatedSvg << "<g transform='translate(0, " << maxY << ")'>" << std::endl;
+            correctlyTranslatedSvg << svg.str();
+            correctlyTranslatedSvg << "</g>" << std::endl;
+            return correctlyTranslatedSvg.str();
         }
 
         void saveSvgToFile(const std::string& filename)
@@ -132,7 +150,6 @@ namespace Indoor::Map
 
         void enterMap(Map& map) override
         {
-            svg << "<svg xmlns='http://www.w3.org/2000/svg'>" << std::endl;
             indentLevel++;
         };
 
@@ -198,7 +215,8 @@ namespace Indoor::Map
                     // TODO different door types
                     const WallDoor& door = wall.doors[seg.listIndex];
 
-                    Point2D openDir = (seg.end - seg.start).orthogonal().normalized();
+                    const Point2D dir = seg.end - seg.start;
+                    Point2D openDir = dir.orthogonal().normalized();
 
                     if (door.inOut)
                         openDir = openDir * -1;
@@ -208,33 +226,16 @@ namespace Indoor::Map
                     const Point2D doorLeaf = doorHinge + openDir * door.width;
 
                     const float doorWidth = 0.9f * door.width;
-                    float startAngle, endAngle;
+
+                    const Point2D hinge2lock = doorLock - doorHinge;
+                    float startAngle = std::atan2(hinge2lock.y, hinge2lock.x);
+                    float endAngle = std::atan2(openDir.y, openDir.x);
+
                     if (door.inOut)
-                    {
-                        if (door.leftRight)
-                        {
-                            startAngle = M_PI_2f;
-                            endAngle = M_PIf;
-                        }
-                        else
-                        {
-                            startAngle = 0;
-                            endAngle = M_PI_2f;
-                        }
-                    }
-                    else
-                    {
-                        if (door.leftRight)
-                        {
-                            startAngle = M_PIf;
-                            endAngle = -M_PI_2f;
-                        }
-                        else
-                        {
-                            startAngle = -M_PI_2f;
-                            endAngle = 0;
-                        }
-                    }
+                        std::swap(startAngle, endAngle);
+
+                    if (door.leftRight)
+                        std::swap(startAngle, endAngle);
 
                     svg << indent() << "<path d=" << qs(svgPathStr(seg.start, seg.end))
                         << " stroke='#000000'"
