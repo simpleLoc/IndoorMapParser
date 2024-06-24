@@ -14,7 +14,7 @@ int main(int argc, char *argv[])
     std::shared_ptr<Indoor::Map::Map> map = p.readMapFromFile("example.xml");
 
     // Export map as svg
-    auto svg = std::make_shared<SvgListener>();
+    auto svg = std::make_shared<Indoor::Map::SvgListener>();
     p.readFromFile("example.xml", svg);
     svg->saveSvgToFile("example.svg");
 }
