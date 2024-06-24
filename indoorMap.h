@@ -3,6 +3,7 @@
 #include <string>
 #include <ostream>
 #include <vector>
+#include <math.h>
 
 namespace Indoor::Map
 {

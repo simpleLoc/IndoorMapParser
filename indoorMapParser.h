@@ -3,12 +3,14 @@
 #include "rapidxml.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <memory>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <functional>
 #include <fstream>
+#include <exception>
 
 #include "indoorMap.h"
 
@@ -86,7 +88,7 @@ namespace Indoor::Map
 
                 std::cout << msg.str();
 
-                throw std::exception(msg.str().c_str());
+                throw std::runtime_error(msg.str().c_str());
             }
         }
         

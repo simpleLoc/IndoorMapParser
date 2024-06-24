@@ -195,9 +195,6 @@ namespace Indoor::Map
                 }
                 case WallSegmentType::Door:
                 {
-                    const float M_PIf = static_cast<float>(M_PI);
-                    const float M_PI_2f = static_cast<float>(M_PI_2);
-
                     // TODO different door types
                     const WallDoor& door = wall.doors[seg.listIndex];
 
